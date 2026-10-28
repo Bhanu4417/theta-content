@@ -47,7 +47,6 @@ const PAPER = C.paper, PAPER_HI = C.paperHi;
 const INK = C.ink, INK_DIM = C.inkDim, INK_RED = C.inkRed, INK_BLUE = C.inkBlue;
 const MONO = '"JetBrainsMono Nerd Font","JetBrains Mono","Noto Sans Mono","DejaVu Sans Mono",monospace';
 const TYMONO = '"Nimbus Mono PS","Courier New","Liberation Mono",monospace';
-const SERIF = '"Liberation Serif","Nimbus Roman","DejaVu Serif",serif';
 const CREAMC = "#f2ecd8";
 
 /* ---------------------------------------------------------------- helpers */
@@ -442,8 +441,8 @@ function sceneBench(t, tg, a) {
     s.fillStyle = INK;
     s.fillText("6 ms", 0, 0);
     s.restore();
-    txt("Theta outperformed", 112, 664, {
-      size: 36, weight: 700, font: SERIF, color: INK, alpha: seg(t, 4.1, 4.5),
+    txt("was the slowest!", 114, 664, {
+      size: 27, weight: 700, color: INK, alpha: seg(t, 4.1, 4.5),
     });
   }
   typedLeft(TL.typeById("b-cap"), tg, 110, 1006, { size: 22, color: INK_DIM });
@@ -476,7 +475,7 @@ function sceneFinale(t, tg, a) {
   const settled = seg(t, 1.6, 2.2);
   if (settled > 0) softGlow(s, mx, my, 400 * settled, "rgba(120,105,75,0.16)", 1);
   // eased-in lines, typewriter cut, sitting close under the mark
-  const t1 = "The harness that lets you work more.";
+  const t1 = "It just feels too fast";
   const p1 = seg(t, 2.2, 3.0, eioCubic);
   if (p1 > 0) {
     s.save();
