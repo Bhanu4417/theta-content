@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Theta — Launch Film</title>
+<style>
+  @font-face {
+    font-family: "Courier Prime";
+    src: url("fonts/CourierPrime-Regular.ttf") format("truetype");
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "EB Garamond";
+    src: url("fonts/EBGaramond-Italic.ttf") format("truetype");
+    font-style: italic;
+    font-weight: 400;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  #container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 16 / 9;
+  }
+</style>
+</head>
+<body>
+<div id="container">
+  <canvas id="c" width="1920" height="1080"></canvas>
+</div>
+<script>
+"use strict";
+
+const W = 1920, H = 1080;
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+
+// --- Content -------------------------------------------------------------
+const TITLE = "One terminal. Every agent. All at once.";
+const SUBTITLE = "~ the art of working in parallel";
+
+const FPS = 60;
+const DURATION = 16.0; // 16.0 seconds = 960 frames
+const TOTAL_FRAMES = Math.round(FPS * DURATION);
+
+// --- Typography Constants ------------------------------------------------
+const FONT_TITLE_SIZE = 46;
+const FONT_TITLE = `${FONT_TITLE_SIZE}px "Courier Prime", monospace`;
+const FONT_SUB_SIZE = 38;
+const FONT_SUB = `italic ${FONT_SUB_SIZE}px "EB Garamond", serif`;
+
+const Y_TITLE_BASELINE = 528;
+const Y_SUB_BASELINE = 626;
+
+// --- Palette (sampled from reference film) ------------------------------
+const COLOR_CORE = "#F5EFE8";          // warm incandescent ivory core
+const COLOR_SUB = "rgba(179, 173, 166, 0.88)"; // warm silver/taupe
+const COLOR_PAPER = "#DDD7CC";         // vintage engineering blueprint paper
+const COLOR_PAPER_DARK = "#201D1A";    // dark charcoal ink
+const COLOR_NAVY = "#1D2D42";          // technical blueprint navy stroke
+const COLOR_PULSE = "#E04836";         // technical red signal pulse
+const COLOR_CYAN = "#4EC9B0";          // code syntax cyan
+const COLOR_GREEN = "#98C379";         // status green
+const COLOR_AMBER = "#E5C07B";         // status amber
+
+// Deterministic hash noise
+function hash(n) {
+  let x = (n | 0) * 2654435761;
+  x = (x ^ (x >>> 13)) * 1274126177;
+  return ((x ^ (x >>> 16)) >>> 0) / 4294967295;
+}
+
+// Snappy, rhythmic character typing timestamps (Brisk & Confident)
+const T0 = 0.25; // Lead-in blinking cursor
+const CHAR_TIMESTAMPS = [];
+{
+  let t = T0;
+  for (let i = 0; i < TITLE.length; i++) {
+    CHAR_TIMESTAMPS.push(+t.toFixed(3));
+    const ch = TITLE[i];
+    const jitter = (hash(i * 37 + 101) - 0.5) * 0.014;
+    let dt = 0.064 + jitter;
+    if (ch === " ") dt = 0.075 + jitter;
+    if (ch === ".") {
+      if (i < TITLE.length - 1) dt = 0.170; // crisp pause at periods
+      else dt = 0.140;
+    }
+    t += dt;
+  }
+}
+
+// Key Scene Transition Times
+const T_TYPE_END = CHAR_TIMESTAMPS[CHAR_TIMESTAMPS.length - 1]; // ~2.95s
+const T_MORPH_START = T_TYPE_END + 0.18;                       // 3.13s
+const T_MORPH_END = T_MORPH_START + 0.45;                      // 3.58s
+const T_SWELL_START = 4.10;                                    // 4.10s
+const T_SWELL_FULL = 4.70;                                     // 4.70s
+const T_S2_SLIDE_START = 9.00;                                 // 9.00s
+const T_S2_SLIDE_END = 9.45;                                   // 9.45s
+const T_S3_SLIDE_START = 13.20;                                // 13.20s
+const T_S3_SLIDE_END = 13.70;                                  // 13.70s
+
+function smoothstep(x) {
+  const c = Math.max(0, Math.min(1, x));
+  return c * c * (3 - 2 * c);
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+// Pre-generate 8 deterministic film grain overlays
+const grainCanvases = [];
+for (let g = 0; g < 8; g++) {
+  const gc = document.createElement("canvas");
+  gc.width = W;
+  gc.height = H;
+  const gctx = gc.getContext("2d");
+  const imgData = gctx.createImageData(W, H);
+  const data = imgData.data;
+  let seed = (g + 1) * 982451653;
+  for (let p = 0; p < W * H; p++) {
+    seed = (seed * 1664525 + 1013904223) | 0;
+    const v = (seed >>> 24) & 15;
+    const idx = p * 4;
+    data[idx] = 255;
+    data[idx + 1] = 235;
+    data[idx + 2] = 210;
+    data[idx + 3] = v;
+  }
+  gctx.putImageData(imgData, 0, 0);
+  grainCanvases.push(gc);
+}
+
+// Cached measurements
+let charWidth = 0;
+let titleStartX = 0;
+let subStartX = 0;
+let subWidth = 0;
+let blockW = 0;
+let blockH = 0;
+let blockY = 0;
+
+function measure() {
+  ctx.font = FONT_TITLE;
+  charWidth = ctx.measureText("M").width;
+  const totalWidth = TITLE.length * charWidth;
+  titleStartX = Math.round((W - totalWidth) / 2);
+  blockW = Math.round(charWidth * 0.96);
+  blockH = Math.round(FONT_TITLE_SIZE * 0.94);
+  blockY = Y_TITLE_BASELINE - blockH + 6;
+
+  ctx.font = FONT_SUB;
+  subWidth = ctx.measureText(SUBTITLE).width;
+  subStartX = Math.round((W - subWidth) / 2);
+}
+
+// Multi-pass CRT bloom rendering
+function drawGlowingText(str, x, y) {
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 195, 130, 0.25)";
+  ctx.shadowBlur = 32;
+  ctx.fillStyle = COLOR_CORE;
+  ctx.fillText(str, x, y);
+
+  ctx.shadowColor = "rgba(255, 225, 180, 0.45)";
+  ctx.shadowBlur = 12;
+  ctx.fillText(str, x, y);
+
+  ctx.shadowColor = "rgba(255, 245, 230, 0.75)";
+  ctx.shadowBlur = 2;
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+
+// Draw Vintage Blueprint Paper Background with Halftone Edge Vignette
+function drawPaperBackground() {
+  ctx.fillStyle = COLOR_PAPER;
+  ctx.fillRect(0, 0, W, H);
+
+  // Faint drafting grid lines
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.035)";
+  ctx.lineWidth = 1;
+  const gridSize = 48;
+  for (let x = 0; x < W; x += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y < H; y += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // Halftone dot vignette along borders (matching reference video style)
+  for (let x = 24; x < W; x += 24) {
+    for (let y = 24; y < H; y += 24) {
+      const dx = Math.min(x, W - x);
+      const dy = Math.min(y, H - y);
+      const edgeDist = Math.min(dx, dy);
+      if (edgeDist < 260) {
+        const dotR = Math.max(0.4, (1 - edgeDist / 260) * 3.4);
+        ctx.fillStyle = "rgba(65, 55, 45, 0.11)";
+        ctx.beginPath();
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+// =========================================================================
+// SCENE 2: PARALLEL AGENT GRID
+// =========================================================================
+function drawScene2Content(t) {
+  const s2Time = Math.max(0, t - T_SWELL_START);
+
+  // 1. Top-left Catalog Header
+  const headerAlpha = clamp((s2Time - 0.2) / 0.5, 0, 1);
+  if (headerAlpha > 0) {
+    ctx.save();
+    ctx.font = 'bold 15px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(80, 72, 64, ${0.85 * headerAlpha})`;
+    ctx.textAlign = "left";
+    ctx.fillText("// ARCHITECTURE SPECIFICATION :: 01", 110, 105);
+
+    ctx.font = '22px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(35, 30, 26, ${0.9 * headerAlpha})`;
+    ctx.fillText("One terminal. Every agent. All at once.", 110, 138);
+
+    ctx.strokeStyle = "rgba(80, 72, 64, 0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(110, 155);
+    ctx.lineTo(620, 155);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 2. Bottom-left Stack: Year 2026 + Title & Subtitle (Clean & Spaced)
+  const textAlpha = clamp((s2Time - 0.35) / 0.6, 0, 1);
+  if (textAlpha > 0) {
+    ctx.save();
+    // Faint watermark behind year
+    ctx.font = '900 240px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.038 * textAlpha})`;
+    ctx.textAlign = "left";
+    ctx.fillText("01", 100, 960);
+
+    // Big bold Year stamp
+    ctx.font = '900 160px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(30, 26, 23, ${textAlpha})`;
+    ctx.textAlign = "left";
+    ctx.fillText("2026", 110, 950);
+
+    // Stamped Headline above Year
+    ctx.font = 'bold 36px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(30, 26, 23, ${textAlpha})`;
+    ctx.fillText("Parallel Agent Grid", 110, 750);
+
+    // Stamped Subtitle
+    ctx.font = '19px "Courier Prime", monospace';
+    ctx.fillStyle = `rgba(75, 65, 58, ${0.9 * textAlpha})`;
+    ctx.fillText("tiled panes • concurrent sessions • in-process harness", 110, 785);
+    ctx.restore();
+  }
+
+  // 3. Center-right: Terminal Workspace Schematic
+  const termDrawP = clamp((s2Time - 0.3) / 0.6, 0, 1);
+  if (termDrawP > 0) {
+    const termX = 940, termY = 200, termW = 860, termH = 580;
+
+    // Outer frame with drop shadow
+    ctx.save();
+    ctx.shadowColor = "rgba(0, 0, 0, 0.15)";
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = "#141923"; // Deep dark sleek TUI background
+    ctx.strokeStyle = COLOR_NAVY;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(termX, termY, termW, termH, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // Terminal Title Bar
+    ctx.fillStyle = "#1C2331";
+    ctx.beginPath();
+    ctx.roundRect(termX, termY, termW, 38, [8, 8, 0, 0]);
+    ctx.fill();
+
+    // Title bar buttons
+    const dotColors = ["#FF5F56", "#FFBD2E", "#27C93F"];
+    for (let d = 0; d < 3; d++) {
+      ctx.fillStyle = dotColors[d];
+      ctx.beginPath();
+      ctx.arc(termX + 22 + d * 18, termY + 19, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Title bar text
+    ctx.fillStyle = "#C8D0DC";
+    ctx.font = '15px "Courier Prime", monospace';
+    ctx.textAlign = "left";
+    ctx.fillText("theta :: multi-agent workspace [3 sessions active]", termX + 85, termY + 24);
+
+    ctx.font = '13px "Courier Prime", monospace';
+    ctx.fillStyle = "#6B7C96";
+    ctx.textAlign = "right";
+    ctx.fillText("ratatui 0.29 • 60 fps", termX + termW - 20, termY + 24);
+
+    // Tiled Pane Division
+    const p1W = Math.round(termW * 0.52);
+    const p2H = Math.round((termH - 38) / 2);
+
+    ctx.strokeStyle = "#273344";
+    ctx.lineWidth = 1.5;
+
+    // Vertical divider
+    ctx.beginPath();
+    ctx.moveTo(termX + p1W, termY + 38);
+    ctx.lineTo(termX + p1W, termY + termH);
+    ctx.stroke();
+
+    // Horizontal divider
+    ctx.beginPath();
+    ctx.moveTo(termX + p1W, termY + 38 + p2H);
+    ctx.lineTo(termX + termW, termY + 38 + p2H);
+    ctx.stroke();
+
+    // --- Pane 1: Architect (Claude 3.7) ----------------------------------
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#88C0D0";
+    ctx.font = 'bold 15px "Courier Prime", monospace';
+    ctx.fillText("┌─ [1] Architect (Claude) ───────────────┐", termX + 16, termY + 68);
+
+    ctx.fillStyle = "#E5E9F0";
+    ctx.font = '13px "Courier Prime", monospace';
+    ctx.fillText("> analyzing workspace diffs...", termX + 20, termY + 102);
+    ctx.fillText("> planning task-tree decomposition:", termX + 20, termY + 128);
+
+    ctx.fillStyle = "#D8DEE9";
+    ctx.fillText("  • fork session #2: implement async event channel", termX + 20, termY + 154);
+    ctx.fillText("  • fork session #3: run cargo clippy & test suite", termX + 20, termY + 180);
+
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.fillText("> dispatching AppEvent::SpawnAgent...", termX + 20, termY + 212);
+    ctx.fillText("> [OK] all 3 workers operating in parallel", termX + 20, termY + 238);
+
+    ctx.fillStyle = "#A3BE8C";
+    ctx.fillText("> watching AppEvents on channel...", termX + 20, termY + 270);
+
+    // Active Cursor
+    if (Math.floor(t * 3.2) % 2 === 0) {
+      ctx.fillStyle = "#88C0D0";
+      ctx.fillRect(termX + 20, termY + 292, 9, 16);
+    }
+    ctx.restore();
+
+    // --- Pane 2: Rust Engine ---------------------------------------------
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLOR_AMBER;
+    ctx.font = 'bold 15px "Courier Prime", monospace';
+    ctx.fillText("┌─ [2] Rust Engine ────────────────────┐", termX + p1W + 16, termY + 68);
+
+    ctx.fillStyle = "#D8DEE9";
+    ctx.font = '13px "Courier Prime", monospace';
+    ctx.fillText("> cargo build --release --locked", termX + p1W + 20, termY + 102);
+
+    ctx.fillStyle = "#81A1C1";
+    ctx.fillText("  Compiling ratatui v0.29.0", termX + p1W + 20, termY + 128);
+    ctx.fillText("  Compiling tokio v1.43.0", termX + p1W + 20, termY + 150);
+    ctx.fillText("  Compiling theta v0.1.0 (/theta)", termX + p1W + 20, termY + 172);
+
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.fillText("  Finished release [optimized] in 2.14s", termX + p1W + 20, termY + 200);
+
+    if (Math.floor(t * 4.0) % 2 === 0) {
+      ctx.fillStyle = COLOR_AMBER;
+      ctx.fillRect(termX + p1W + 20, termY + 222, 9, 16);
+    }
+    ctx.restore();
+
+    // --- Pane 3: Harness & Lint -----------------------------------------
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.font = 'bold 15px "Courier Prime", monospace';
+    ctx.fillText("┌─ [3] Harness & Lint ─────────────────┐", termX + p1W + 16, termY + 38 + p2H + 28);
+
+    ctx.fillStyle = "#D8DEE9";
+    ctx.font = '13px "Courier Prime", monospace';
+    ctx.fillText("> cargo test --locked", termX + p1W + 20, termY + 38 + p2H + 60);
+
+    ctx.fillStyle = COLOR_GREEN;
+    ctx.fillText("  test result: ok. 211 passed; 0 failed", termX + p1W + 20, termY + 38 + p2H + 84);
+
+    ctx.fillStyle = "#D8DEE9";
+    ctx.fillText("> cargo clippy --all-targets", termX + p1W + 20, termY + 38 + p2H + 112);
+
+    ctx.fillStyle = "#88C0D0";
+    ctx.fillText("  0 warnings, clean", termX + p1W + 20, termY + 38 + p2H + 136);
+
+    ctx.fillStyle = "#A3BE8C";
+    ctx.fillText("> listening: ports 3000, 8080 active", termX + p1W + 20, termY + 38 + p2H + 162);
+
+    if (Math.floor(t * 4.5) % 2 === 0) {
+      ctx.fillStyle = COLOR_GREEN;
+      ctx.fillRect(termX + p1W + 20, termY + 38 + p2H + 184, 9, 16);
+    }
+    ctx.restore();
+
+    // 4. Input Signal Circuit Nodes
+    const nodes = [
+      { y: 280, label: "Session #1 (Architect)", portY: termY + 70 },
+      { y: 430, label: "Session #2 (Rust Engine)", portY: termY + 210 },
+      { y: 580, label: "Session #3 (Harness & Lint)", portY: termY + 410 }
+    ];
+
+    const nodeX = 660;
+
+    nodes.forEach((n, idx) => {
+      // Node Ring
+      ctx.strokeStyle = COLOR_NAVY;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(nodeX, n.y, 14, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = COLOR_NAVY;
+      ctx.beginPath();
+      ctx.arc(nodeX, n.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Node Label (aligned right to node)
+      ctx.font = 'bold 15px "Courier Prime", monospace';
+      ctx.fillStyle = COLOR_NAVY;
+      ctx.textAlign = "right";
+      ctx.fillText(n.label, nodeX - 24, n.y + 5);
+
+      // Connecting blueprint trace line to terminal window
+      ctx.beginPath();
+      ctx.moveTo(nodeX + 14, n.y);
+      ctx.lineTo(nodeX + 80, n.y);
+      ctx.lineTo(nodeX + 130, n.portY);
+      ctx.lineTo(termX, n.portY);
+      ctx.strokeStyle = COLOR_NAVY;
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      // Technical crosshair '+'
+      ctx.fillStyle = COLOR_PULSE;
+      ctx.font = "bold 16px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("+", nodeX + 70, n.y - 8);
+
+      // Data pulse travelling along trace
+      const pulseT = ((t * 1.8 + idx * 0.33) % 1.0);
+      let px, py;
+      if (pulseT < 0.25) {
+        const u = pulseT / 0.25;
+        px = (nodeX + 14) + (66) * u;
+        py = n.y;
+      } else if (pulseT < 0.55) {
+        const u = (pulseT - 0.25) / 0.30;
+        px = (nodeX + 80) + 50 * u;
+        py = n.y + (n.portY - n.y) * u;
+      } else {
+        const u = (pulseT - 0.55) / 0.45;
+        px = (nodeX + 130) + (termX - (nodeX + 130)) * u;
+        py = n.portY;
+      }
+
+      ctx.save();
+      ctx.fillStyle = COLOR_PULSE;
+      ctx.shadowColor = "rgba(224, 72, 54, 0.8)";
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // Halftone Circular Central Hub
+    const hubX = 840, hubY = 430;
+    ctx.save();
+    ctx.strokeStyle = "rgba(196, 61, 42, 0.4)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(hubX, hubY, 38, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (let r = 8; r <= 32; r += 7) {
+      const count = Math.round(r * 1.2);
+      for (let c = 0; c < count; c++) {
+        const ang = (c / count) * Math.PI * 2;
+        const hx = hubX + Math.cos(ang) * r;
+        const hy = hubY + Math.sin(ang) * r;
+        const d = 1 - r / 34;
+        ctx.fillStyle = `rgba(29, 45, 66, ${d * 0.7})`;
+        ctx.beginPath();
+        ctx.arc(hx, hy, d * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.fillStyle = "#E04836";
+    ctx.shadowColor = "rgba(224, 72, 54, 0.9)";
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(hubX, hubY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// =========================================================================
+// SCENE 3: THE SEAM (IN-PROCESS AGENT HARNESS)
+// =========================================================================
+function drawScene3Content(t) {
+  // 1. Top-left Header
+  ctx.save();
+  ctx.font = 'bold 15px "Courier Prime", monospace';
+  ctx.fillStyle = "rgba(80, 72, 64, 0.85)";
+  ctx.textAlign = "left";
+  ctx.fillText("// ARCHITECTURE SPECIFICATION :: 02", 110, 105);
+
+  ctx.font = '22px "Courier Prime", monospace';
+  ctx.fillStyle = "rgba(35, 30, 26, 0.9)";
+  ctx.fillText("The Seam: In-Process Harness & Event Bus", 110, 138);
+
+  ctx.strokeStyle = "rgba(80, 72, 64, 0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(110, 155);
+  ctx.lineTo(680, 155);
+  ctx.stroke();
+  ctx.restore();
+
+  // 2. Bottom-left Stack: Year 2026 + Core Rule
+  ctx.save();
+  ctx.font = '900 240px "Courier Prime", monospace';
+  ctx.fillStyle = "rgba(0, 0, 0, 0.038)";
+  ctx.textAlign = "left";
+  ctx.fillText("02", 100, 960);
+
+  ctx.font = '900 160px "Courier Prime", monospace';
+  ctx.fillStyle = "#1E1A17";
+  ctx.textAlign = "left";
+  ctx.fillText("2026", 110, 950);
+
+  ctx.font = 'bold 34px "Courier Prime", monospace';
+  ctx.fillStyle = "#1E1A17";
+  ctx.fillText("Zero-IPC Harness", 110, 750);
+
+  ctx.font = '19px "Courier Prime", monospace';
+  ctx.fillStyle = "#524B44";
+  ctx.fillText("UI never talks to a provider • AppEvent pump • 60fps lockstep", 110, 785);
+  ctx.restore();
+
+  // 3. Central Architecture Block Diagram
+  const bx = 820, by = 230;
+
+  // Box 1: UI Layer (Ratatui TUI)
+  const uiW = 280, uiH = 340;
+  ctx.save();
+  ctx.fillStyle = "#151B24";
+  ctx.strokeStyle = COLOR_NAVY;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, uiW, uiH, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Header
+  ctx.fillStyle = "#1D2634";
+  ctx.beginPath();
+  ctx.roundRect(bx, by, uiW, 36, [8, 8, 0, 0]);
+  ctx.fill();
+
+  ctx.fillStyle = "#88C0D0";
+  ctx.font = 'bold 15px "Courier Prime", monospace';
+  ctx.textAlign = "left";
+  ctx.fillText("UI Layer (ratatui)", bx + 16, by + 24);
+
+  ctx.fillStyle = "#D8DEE9";
+  ctx.font = '13px "Courier Prime", monospace';
+  ctx.fillText("• app.rs (state routing)", bx + 16, by + 70);
+  ctx.fillText("• conversation.rs", bx + 16, by + 98);
+  ctx.fillText("• render line cache", bx + 16, by + 126);
+  ctx.fillText("• crossterm 60fps loop", bx + 16, by + 154);
+  ctx.fillText("• weighted pane grid", bx + 16, by + 182);
+
+  ctx.fillStyle = COLOR_GREEN;
+  ctx.fillText("Status: Lockstep Draw", bx + 16, by + 230);
+  ctx.fillText("Latency: < 0.15ms", bx + 16, by + 258);
+  ctx.fillText("Frame: 16.6ms sync", bx + 16, by + 286);
+  ctx.restore();
+
+  // Box 2: In-Process Agent Harness (Engine)
+  const hx = bx + uiW + 360;
+  const hW = 340, hH = 340;
+  ctx.save();
+  ctx.fillStyle = "#151B24";
+  ctx.strokeStyle = COLOR_NAVY;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.roundRect(hx, by, hW, hH, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Header
+  ctx.fillStyle = "#1D2634";
+  ctx.beginPath();
+  ctx.roundRect(hx, by, hW, 36, [8, 8, 0, 0]);
+  ctx.fill();
+
+  ctx.fillStyle = COLOR_AMBER;
+  ctx.font = 'bold 15px "Courier Prime", monospace';
+  ctx.textAlign = "left";
+  ctx.fillText("In-Process Agent Harness", hx + 16, by + 24);
+
+  ctx.fillStyle = "#D8DEE9";
+  ctx.font = '13px "Courier Prime", monospace';
+  ctx.fillText("• manager.rs (tokio bridge)", hx + 16, by + 70);
+  ctx.fillText("• providers/local adapter", hx + 16, by + 98);
+  ctx.fillText("• ai/ (Claude, OpenAI, Gemini)", hx + 16, by + 126);
+  ctx.fillText("• agent loop & context", hx + 16, by + 154);
+  ctx.fillText("• permission gate & tools", hx + 16, by + 182);
+
+  ctx.fillStyle = COLOR_CYAN;
+  ctx.fillText("Memory: 14.2 MB RSS", hx + 16, by + 230);
+  ctx.fillText("Tests: 211 passed (clean)", hx + 16, by + 258);
+  ctx.fillText("Clippy: 0 warnings", hx + 16, by + 286);
+  ctx.restore();
+
+  // Channel in the middle: AppEvent Channel (tokio::mpsc)
+  const cx1 = bx + uiW;
+  const cx2 = hx;
+  const chY1 = by + 110;
+  const chY2 = by + 230;
+
+  // Track 1: Forward (UI -> Harness: User Commands)
+  ctx.save();
+  ctx.strokeStyle = COLOR_NAVY;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx1, chY1);
+  ctx.lineTo(cx2, chY1);
+  ctx.stroke();
+
+  ctx.fillStyle = COLOR_NAVY;
+  ctx.font = 'bold 13px "Courier Prime", monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("Commands & Keystrokes ──►", (cx1 + cx2) / 2, chY1 - 10);
+
+  // Track 2: Reverse (Harness -> UI: AppEvent Stream)
+  ctx.beginPath();
+  ctx.moveTo(cx2, chY2);
+  ctx.lineTo(cx1, chY2);
+  ctx.stroke();
+
+  ctx.fillStyle = COLOR_PULSE;
+  ctx.fillText("◄── AppEvent Stream (zero-copy)", (cx1 + cx2) / 2, chY2 + 22);
+
+  // High speed bidirectional pulses
+  for (let p = 0; p < 4; p++) {
+    const pt1 = ((t * 2.2 + p * 0.25) % 1.0);
+    const px1 = cx1 + (cx2 - cx1) * pt1;
+    ctx.fillStyle = "#88C0D0";
+    ctx.shadowColor = "rgba(136, 192, 208, 0.8)";
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(px1, chY1, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    const pt2 = ((t * 3.0 + p * 0.25) % 1.0);
+    const px2 = cx2 - (cx2 - cx1) * pt2;
+    ctx.fillStyle = COLOR_PULSE;
+    ctx.shadowColor = "rgba(224, 72, 54, 0.9)";
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(px2, chY2, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Technical Annotation below diagram (Directly citing AGENTS.md contract)
+  ctx.save();
+  ctx.font = '14px "Courier Prime", monospace';
+  ctx.fillStyle = "rgba(40, 35, 30, 0.75)";
+  ctx.textAlign = "left";
+  ctx.fillText("┌── SEAM GUARANTEE ────────────────────────────────────────────────────────┐", bx, by + uiH + 40);
+  ctx.fillText("│ Harness calls are fire-and-forget; never block the ratatui event loop.  │", bx, by + uiH + 64);
+  ctx.fillText("│ Inner mutex is never held across an await. 211 tests offline & verified.│", bx, by + uiH + 88);
+  ctx.fillText("└──────────────────────────────────────────────────────────────────────────┘", bx, by + uiH + 112);
+  ctx.restore();
+}
+
+// =========================================================================
+// SCENE 4: CLIMAX & IDENTITY
+// =========================================================================
+function drawScene4Content(t) {
+  // Deep CRT Void with Warm Amber Ambient Glow
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 1100);
+  bg.addColorStop(0, "#1c1714");
+  bg.addColorStop(0.55, "#0b0908");
+  bg.addColorStop(0.90, "#030303");
+  bg.addColorStop(1, "#020202");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const s4Time = Math.max(0, t - T_S3_SLIDE_END);
+  const fadeP = clamp(s4Time / 0.5, 0, 1);
+
+  // 1. Greek Theta Symbol in Minimal Seal
+  ctx.save();
+  const sealX = W / 2, sealY = 310;
+  ctx.strokeStyle = `rgba(255, 230, 180, ${0.55 * fadeP})`;
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = "rgba(255, 220, 160, 0.75)";
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(sealX, sealY, 58, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Theta glyph: θ
+  ctx.font = '76px "Courier Prime", monospace';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = COLOR_CORE;
+  ctx.shadowColor = "rgba(255, 220, 160, 0.85)";
+  ctx.shadowBlur = 18;
+  ctx.fillText("θ", sealX, sealY - 4);
+  ctx.restore();
+
+  // 2. Large Monumental Title: THETA
+  ctx.save();
+  ctx.font = 'bold 88px "Courier Prime", monospace';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  drawGlowingText("THETA", W / 2, 480);
+  ctx.restore();
+
+  // 3. Subtitle: One terminal. Every agent. All at once.
+  ctx.save();
+  ctx.font = 'italic 36px "EB Garamond", serif';
+  ctx.textAlign = "center";
+  ctx.fillStyle = COLOR_SUB;
+  ctx.shadowColor = "rgba(255, 220, 180, 0.25)";
+  ctx.shadowBlur = 10;
+  ctx.fillText("One terminal. Every agent. All at once.", W / 2, 555);
+  ctx.restore();
+
+  // 4. Terminal Command Box
+  ctx.save();
+  const cmd = "$ cargo install theta";
+  ctx.font = '26px "Courier Prime", monospace';
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#A8C5E8";
+  ctx.shadowColor = "rgba(168, 197, 232, 0.6)";
+  ctx.shadowBlur = 12;
+  ctx.fillText(cmd, W / 2, 655);
+
+  // Blinking block cursor after command
+  if (Math.floor(s4Time * 3.5) % 2 === 0) {
+    const cmdW = ctx.measureText(cmd).width;
+    ctx.fillStyle = COLOR_CORE;
+    ctx.fillRect(W / 2 + cmdW / 2 + 10, 632, 14, 26);
+  }
+  ctx.restore();
+
+  // 5. Build stamp & attribution matching reference video
+  ctx.save();
+  ctx.font = '18px "Courier Prime", monospace';
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(179, 173, 166, 0.65)";
+  ctx.fillText("Built with Rust • ratatui • tokio • github.com/Bhanu4417/theta", W / 2, 880);
+
+  ctx.font = '16px "Courier Prime", monospace';
+  ctx.fillStyle = "rgba(179, 173, 166, 0.45)";
+  ctx.fillText("Design, animation, music & sound: written entirely in code.", W / 2, 920);
+  ctx.restore();
+
+  // Tactile film grain overlay
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = 0.35;
+  ctx.drawImage(grainCanvases[Math.round(t * 60) % 8], 0, 0);
+  ctx.restore();
+}
+
+// =========================================================================
+// PRIMARY RENDER FUNCTION (PURE FUNCTION OF TIME)
+// =========================================================================
+function render(frame) {
+  if (charWidth === 0) measure();
+
+  const t = frame / FPS;
+
+  // Scene 4: Climax & Outro (Full view after 13.70s)
+  if (t >= T_S3_SLIDE_END) {
+    drawScene4Content(t);
+    return;
+  }
+
+  // Transition Scene 3 -> Scene 4 (Expanding Dark Aperture Lens 13.20s - 13.70s)
+  if (t >= T_S3_SLIDE_START) {
+    // 1. Base is Scene 3 on vintage paper
+    drawPaperBackground();
+    drawScene3Content(t);
+
+    // 2. Expanding Iris from Center revealing Scene 4
+    const swellP = clamp((t - T_S3_SLIDE_START) / (T_S3_SLIDE_END - T_S3_SLIDE_START), 0, 1);
+    const swellRadius = 6.0 + Math.pow(swellP, 2.2) * 1900;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, swellRadius, 0, Math.PI * 2);
+    ctx.clip();
+
+    drawScene4Content(t);
+
+    ctx.restore();
+
+    // Circle border glow
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, swellRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(250, 240, 225, 0.6)";
+    ctx.lineWidth = 5;
+    ctx.shadowColor = "rgba(255, 235, 205, 0.9)";
+    ctx.shadowBlur = 30;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // Scene 3: The Seam (Full view 9.45s - 13.20s)
+  if (t >= T_S2_SLIDE_END) {
+    drawPaperBackground();
+    drawScene3Content(t);
+    return;
+  }
+
+  // Transition Scene 2 -> Scene 3 (Full-Screen Technical Laser Wipe 9.00s - 9.45s)
+  if (t >= T_S2_SLIDE_START) {
+    drawPaperBackground();
+
+    const slideP = clamp((t - T_S2_SLIDE_START) / (T_S2_SLIDE_END - T_S2_SLIDE_START), 0, 1);
+    const u = smoothstep(slideP);
+    const wipeX = W * u;
+
+    // Right of wipe line: Scene 2
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(wipeX, 0, W - wipeX, H);
+    ctx.clip();
+    drawScene2Content(t);
+    ctx.restore();
+
+    // Left of wipe line: Scene 3
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, wipeX, H);
+    ctx.clip();
+    drawScene3Content(t);
+    ctx.restore();
+
+    // Glowing technical laser wipe rule
+    ctx.save();
+    ctx.strokeStyle = COLOR_PULSE;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = "rgba(224, 72, 54, 0.9)";
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.moveTo(wipeX, 0);
+    ctx.lineTo(wipeX, H);
+    ctx.stroke();
+
+    // Top & bottom crosshair beads
+    ctx.fillStyle = "#FF5F56";
+    ctx.beginPath();
+    ctx.arc(wipeX, 80, 5, 0, Math.PI * 2);
+    ctx.arc(wipeX, H - 80, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    return;
+  }
+
+  // Scene 2: Parallel Agent Grid (Full view 4.70s - 9.00s)
+  if (t >= T_SWELL_FULL) {
+    drawPaperBackground();
+    drawScene2Content(t);
+    return;
+  }
+
+  // --- SCENE 1: THE PHILOSOPHICAL VOID (0.0s - 4.70s) ----------------------
+  // 1. Deep warm vignetted dark field
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 1050);
+  bg.addColorStop(0, "#1c1714");
+  bg.addColorStop(0.55, "#0b0908");
+  bg.addColorStop(0.90, "#030303");
+  bg.addColorStop(1, "#020202");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // 2. Count revealed characters
+  let revealed = 0;
+  while (revealed < CHAR_TIMESTAMPS.length && CHAR_TIMESTAMPS[revealed] <= t) {
+    revealed++;
+  }
+
+  // 3. Draw Title Text
+  if (revealed > 0) {
+    ctx.font = FONT_TITLE;
+    ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "left";
+    const currentStr = TITLE.slice(0, revealed);
+    drawGlowingText(currentStr, titleStartX, Y_TITLE_BASELINE);
+  }
+
+  // 4. Cursor / Glowing Dot
+  let showCursor = true;
+  if (t < T0) {
+    // Lead-in blink: on 0..0.16, off 0.16..0.22, on 0.22..0.25
+    if (t >= 0.16 && t < 0.22) showCursor = false;
+  }
+
+  const curX = titleStartX + revealed * charWidth + 2;
+  const cx = curX + blockW / 2;
+  const cy = blockY + blockH / 2;
+
+  if (showCursor) {
+    ctx.save();
+
+    if (t < T_MORPH_START) {
+      // Solid rectangular typewriter cursor
+      ctx.fillStyle = COLOR_CORE;
+      ctx.shadowColor = "rgba(255, 220, 160, 0.85)";
+      ctx.shadowBlur = 14;
+      ctx.fillRect(curX, blockY, blockW, blockH);
+    } else if (t < T_SWELL_START) {
+      // Morphing from block into glowing breathing dot
+      const morphP = smoothstep((t - T_MORPH_START) / (T_MORPH_END - T_MORPH_START));
+      const w = blockW * (1 - morphP) + 14 * morphP;
+      const h = blockH * (1 - morphP) + 14 * morphP;
+      const r = (morphP > 0) ? (h / 2 * morphP) : 0;
+      const x = cx - w / 2;
+      const y = cy - h / 2;
+
+      let breathR = 0;
+      let breathGlow = 0;
+      if (morphP >= 1.0) {
+        const breathTime = t - T_MORPH_END;
+        breathR = 0.6 * Math.sin(2 * Math.PI * breathTime / 1.5);
+        breathGlow = 4 * Math.sin(2 * Math.PI * breathTime / 1.5);
+      }
+
+      ctx.fillStyle = COLOR_CORE;
+      ctx.shadowColor = "rgba(255, 220, 160, 0.88)";
+      ctx.shadowBlur = 14 + morphP * 6 + breathGlow;
+
+      ctx.beginPath();
+      if (r > 0) {
+        const finalR = (h / 2) + breathR;
+        ctx.arc(cx, cy, Math.max(1, finalR), 0, Math.PI * 2);
+      } else {
+        ctx.rect(x, y, w, h);
+      }
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 5. Line 2 Subtitle: EB Garamond Italic with progressive soft reveal
+  if (t >= T_MORPH_START) {
+    const revealP = clamp((t - T_MORPH_START) / 0.45, 0, 1);
+    ctx.save();
+    ctx.font = FONT_SUB;
+    ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "left";
+
+    const revealW = subWidth * Math.min(1.0, revealP * 1.08);
+    ctx.beginPath();
+    ctx.rect(subStartX - 10, Y_SUB_BASELINE - 60, revealW + 10, 80);
+    ctx.clip();
+
+    ctx.shadowColor = "rgba(255, 220, 180, 0.18)";
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = `rgba(179, 173, 166, ${Math.min(0.88, revealP * 1.15)})`;
+    ctx.fillText(SUBTITLE, subStartX, Y_SUB_BASELINE);
+    ctx.restore();
+  }
+
+  // 6. Tactile film grain overlay (GPU blend)
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = 0.35;
+  ctx.drawImage(grainCanvases[frame % 8], 0, 0);
+  ctx.restore();
+
+  // 7. Transition Swell Lens: expands from glowing dot into Scene 2
+  if (t >= T_SWELL_START) {
+    const swellP = clamp((t - T_SWELL_START) / (T_SWELL_FULL - T_SWELL_START), 0, 1);
+    const swellRadius = 7.0 + Math.pow(swellP, 2.4) * 1900;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, swellRadius, 0, Math.PI * 2);
+    ctx.clip();
+
+    // Inside the circle: render Scene 2 on vintage paper!
+    drawPaperBackground();
+    drawScene2Content(t);
+
+    ctx.restore();
+
+    // Circle border glow
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, swellRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(250, 240, 225, 0.6)";
+    ctx.lineWidth = 5;
+    ctx.shadowColor = "rgba(255, 235, 205, 0.9)";
+    ctx.shadowBlur = 30;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Window API for puppeteer
+window.renderAt = (frame) => {
+  render(frame);
+  return frame;
+};
+
+// Setup fonts & measurements on load
+window.readyPromise = (async () => {
+  await document.fonts.load(FONT_TITLE);
+  await document.fonts.load(FONT_SUB);
+  await document.fonts.ready;
+  measure();
+  if (window.location.search.includes("play")) {
+    let f = 0;
+    function loop() {
+      render(f);
+      f = (f + 1) % TOTAL_FRAMES;
+      requestAnimationFrame(loop);
+    }
+    loop();
+  } else {
+    render(0);
+  }
+})();
+</script>
+</body>
+</html>

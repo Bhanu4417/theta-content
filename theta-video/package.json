@@ -1,0 +1,15 @@
+{
+  "name": "theta-video",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Code-generated cinematic launch video for Theta",
+  "main": "render.mjs",
+  "scripts": {
+    "build": "./make.sh",
+    "audio": "node audio.mjs",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.16.0"
+  }
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset='utf-8'>
+<style>
+  @font-face {
+    font-family: 'Courier Prime';
+    src: url('fonts/CourierPrime-Regular.ttf') format('truetype');
+  }
+  @font-face {
+    font-family: 'EB Garamond';
+    src: url('fonts/EBGaramond-Italic.ttf') format('truetype');
+    font-style: italic;
+  }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id='c' width='1920' height='1080'></canvas>
+<script>
+const W = 1920, H = 1080;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+window.renderTest = () => {
+  // Vignette background
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 1100);
+  bg.addColorStop(0, '#1c1714');
+  bg.addColorStop(0.5, '#0c0a09');
+  bg.addColorStop(1, '#030303');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Line 1: Courier Prime
+  ctx.save();
+  ctx.font = '48px "Courier Prime", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const text1 = 'One terminal. Every agent. All at once.';
+  const y1 = 515;
+
+  // Outer ambient warm glow
+  ctx.shadowColor = 'rgba(255, 200, 140, 0.18)';
+  ctx.shadowBlur = 36;
+  ctx.fillStyle = '#F5EFE8';
+  ctx.fillText(text1, W / 2, y1);
+
+  // Mid glow
+  ctx.shadowColor = 'rgba(255, 230, 185, 0.45)';
+  ctx.shadowBlur = 14;
+  ctx.fillText(text1, W / 2, y1);
+
+  // Core stroke
+  ctx.shadowColor = 'rgba(255, 250, 240, 0.70)';
+  ctx.shadowBlur = 3;
+  ctx.fillText(text1, W / 2, y1);
+  ctx.restore();
+
+  // Morphing cursor / dot
+  const m1 = ctx.measureText(text1);
+  const dotX = W / 2 + m1.width / 2 + 18;
+  const dotY = y1;
+  ctx.save();
+  ctx.fillStyle = '#F5EFE8';
+  ctx.shadowColor = 'rgba(255, 220, 160, 0.8)';
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Line 2: EB Garamond Italic
+  ctx.save();
+  ctx.font = 'italic 38px "EB Garamond", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const text2 = '~ the art of working in parallel';
+  const y2 = 615;
+
+  ctx.shadowColor = 'rgba(255, 220, 180, 0.12)';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = 'rgba(179, 173, 166, 0.88)';
+  ctx.fillText(text2, W / 2, y2);
+  ctx.restore();
+};
+</script>
+</body>
+</html>

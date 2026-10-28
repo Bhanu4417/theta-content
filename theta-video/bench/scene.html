@@ -1,0 +1,577 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Theta — the launch bench</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0c0a; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="v" width="1920" height="1080"></canvas>
+<script src="timeline.js"></script>
+<script src="logos.js"></script>
+<script>
+"use strict";
+const TL = window.TL;
+const cv = document.getElementById("v");
+const s = cv.getContext("2d", { alpha: false });
+
+/* ---------------------------------------------------------------- palette */
+// the classic cut's gruvbox paper world
+const C = {
+  page:   "#141311",
+  bgDark: "#1d2021",
+  border: "#45403d",
+  focus:  "#83a598",
+  fg:     "#ebdbb2",
+  dim:    "#928374",
+  mute:   "#665c54",
+  soft:   "#bdae93",
+  blue:   "#83a598",
+  aqua:   "#8ec07c",
+  purple: "#d3869b",
+  orange: "#fe8019",
+  yellow: "#fabd2f",
+  green:  "#b8bb26",
+  red:    "#fb4934",
+  paper:  "#f2e5bc",
+  paperHi:"#f9f1cd",
+  ink:    "#3c3836",
+  inkDim: "#6f6555",
+  inkRed: "#9d0006",
+  inkBlue:"#076678",
+};
+const PAPER = C.paper, PAPER_HI = C.paperHi;
+const INK = C.ink, INK_DIM = C.inkDim, INK_RED = C.inkRed, INK_BLUE = C.inkBlue;
+const MONO = '"JetBrainsMono Nerd Font","JetBrains Mono","Noto Sans Mono","DejaVu Sans Mono",monospace';
+const TYMONO = '"Nimbus Mono PS","Courier New","Liberation Mono",monospace';
+const SERIF = '"Liberation Serif","Nimbus Roman","DejaVu Serif",serif';
+const CREAMC = "#f2ecd8";
+
+/* ---------------------------------------------------------------- helpers */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 14), 1 | a)) >>> 0;
+    return t / 4294967296;
+  };
+}
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+const lerp = (a, b, t) => a + (b - a) * t;
+const remap = (t, a, b) => clamp01((t - a) / (b - a));
+const eoCubic = (p) => 1 - Math.pow(1 - p, 3);
+const eioCubic = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const eoBack = (p) => { const c = 1.70158 * 1.2; const q = p - 1; return 1 + (c + 1) * q * q * q + c * q * q; };
+const seg = (t, a, b, e) => (e || eoCubic)(remap(t, a, b));
+const blink = (t, hz) => ((t * (hz || 1.6)) % 1) < 0.62;
+
+const measureCache = new Map();
+function measure(str, size, weight, font) {
+  const k = size + "|" + (weight || 400) + "|" + (font || MONO) + "|" + str;
+  let v = measureCache.get(k);
+  if (v === undefined) {
+    s.font = (weight || 400) + " " + size + "px " + (font || MONO);
+    v = s.measureText(str).width;
+    measureCache.set(k, v);
+  }
+  return v;
+}
+function txt(str, x, y, o) {
+  o = o || {};
+  if (o.alpha !== undefined && o.alpha <= 0) return 0;
+  const size = o.size || 20;
+  s.font = (o.weight || 400) + " " + (o.italic ? "italic " : "") + size + "px " + (o.font || MONO);
+  s.textAlign = o.align || "left";
+  s.textBaseline = o.baseline || "alphabetic";
+  if (o.glow) {
+    s.shadowColor = o.glowColor || o.color || C.fg;
+    s.shadowBlur = o.glow;
+  }
+  s.globalAlpha *= (o.alpha === undefined ? 1 : o.alpha);
+  s.fillStyle = o.color || C.fg;
+  s.fillText(str, x, y);
+  s.shadowBlur = 0;
+  s.globalAlpha /= (o.alpha === undefined ? 1 : o.alpha);
+  return measure(str, size, o.weight, o.font);
+}
+function rr(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  s.beginPath();
+  s.moveTo(x + r, y);
+  s.arcTo(x + w, y, x + w, y + h, r);
+  s.arcTo(x + w, y + h, x, y + h, r);
+  s.arcTo(x, y + h, x, y, r);
+  s.arcTo(x, y, x + w, y, r);
+  s.closePath();
+}
+function fillRR(x, y, w, h, r, color, alpha) {
+  if (alpha !== undefined && alpha <= 0) return;
+  if (alpha !== undefined) s.globalAlpha *= alpha;
+  s.fillStyle = color;
+  rr(x, y, w, h, r);
+  s.fill();
+  if (alpha !== undefined) s.globalAlpha /= alpha;
+}
+function strokeRR(x, y, w, h, r, color, width, alpha) {
+  if (alpha !== undefined && alpha <= 0) return;
+  if (alpha !== undefined) s.globalAlpha *= alpha;
+  s.strokeStyle = color;
+  s.lineWidth = width || 2;
+  rr(x, y, w, h, r);
+  s.stroke();
+  if (alpha !== undefined) s.globalAlpha /= alpha;
+}
+function softGlow(g, x, y, r, color, alpha) {
+  const grd = g.createRadialGradient(x, y, 0, x, y, r);
+  grd.addColorStop(0, color);
+  grd.addColorStop(1, "rgba(0,0,0,0)");
+  g.save();
+  g.globalAlpha = alpha;
+  g.fillStyle = grd;
+  g.fillRect(x - r, y - r, r * 2, r * 2);
+  g.restore();
+}
+function hexA(hex, a) {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  return "rgba(" + r + "," + g + "," + b + "," + a + ")";
+}
+
+/* --------------------------------------------------------- static overlays */
+function makeOff(w, h, fn) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  fn(g, w, h);
+  return c;
+}
+const paperDots = makeOff(TL.W, TL.H, (g, w, h) => {
+  g.fillStyle = "rgba(60,56,54,1)";
+  const step = 26;
+  for (let y = step / 2; y < h; y += step) {
+    for (let x = step / 2; x < w; x += step) {
+      const dx = Math.min(x, w - x) / 420, dy = Math.min(y, h - y) / 300;
+      const d = Math.min(1, Math.min(dx, dy));
+      const a = 0.30 * d;
+      if (a <= 0.01) continue;
+      g.globalAlpha = a;
+      g.beginPath();
+      g.arc(x, y, 2.4, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+});
+const paperVign = makeOff(TL.W, TL.H, (g, w, h) => {
+  const grd = g.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.95);
+  grd.addColorStop(0, "rgba(120,105,75,0)");
+  grd.addColorStop(1, "rgba(120,105,75,0.20)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, w, h);
+});
+function fillPaper() {
+  s.fillStyle = PAPER;
+  s.fillRect(0, 0, TL.W, TL.H);
+  s.drawImage(paperDots, 0, 0);
+  s.drawImage(paperVign, 0, 0);
+}
+const GRAIN_N = 6;
+const grainTiles = [];
+for (let i = 0; i < GRAIN_N; i++) {
+  grainTiles.push(makeOff(240, 240, (g, w, h) => {
+    const rnd = mulberry32(1000 + i * 77);
+    const img = g.createImageData(w, h);
+    for (let p = 0; p < img.data.length; p += 4) {
+      const v = rnd() < 0.5 ? 0 : 255;
+      img.data[p] = img.data[p + 1] = img.data[p + 2] = v;
+      img.data[p + 3] = Math.floor(rnd() * 46);
+    }
+    g.putImageData(img, 0, 0);
+  }));
+}
+const grainPatterns = grainTiles.map((c) => s.createPattern(c, "repeat"));
+const vignette = makeOff(TL.W, TL.H, (g, w, h) => {
+  const grd = g.createRadialGradient(w / 2, h / 2, h * 0.32, w / 2, h / 2, h * 0.86);
+  grd.addColorStop(0, "rgba(0,0,0,0)");
+  grd.addColorStop(1, "rgba(0,0,0,0.42)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, w, h);
+});
+// diagonal hatch fills for the bars, seamless 12px tile
+function hatchTile(color, alpha, width) {
+  return makeOff(12, 12, (g) => {
+    g.strokeStyle = hexA(color, alpha);
+    g.lineWidth = width || 2.2;
+    g.beginPath();
+    g.moveTo(0, 12); g.lineTo(12, 0);
+    g.moveTo(-6, 6); g.lineTo(6, -6);
+    g.moveTo(6, 18); g.lineTo(18, 6);
+    g.stroke();
+  });
+}
+const hatchNavy = s.createPattern(hatchTile(INK_BLUE, 0.75), "repeat");
+const hatchRed = s.createPattern(hatchTile(INK_RED, 0.85), "repeat");
+
+/* ----------------------------------------------------------------- assets */
+const LOGO = {};
+for (const k of Object.keys(window.LOGOS || {})) {
+  const i = new Image();
+  i.src = window.LOGOS[k];
+  LOGO[k] = i;
+}
+
+/* -------------------------------------------------------------- components */
+// the pixel θ brand mark (theta-mark.svg rects, 432-unit box)
+const MARK = [
+  [133, 125, 106, 31], [163, 156, 31, 44], [208, 156, 31, 44],
+  [163, 200, 31, 16], [208, 200, 61, 16], [163, 216, 31, 15],
+  [208, 216, 76, 15], [163, 232, 31, 15], [208, 232, 31, 15],
+  [253, 232, 46, 15], [163, 247, 31, 60], [208, 247, 31, 60], [268, 247, 31, 60],
+];
+function drawMarkRects(cx, cy, size, color, alpha, perRect) {
+  if (alpha !== undefined && alpha <= 0) return;
+  const k = size / 432;
+  const x0 = cx - size / 2, y0 = cy - size / 2;
+  s.globalAlpha *= alpha === undefined ? 1 : alpha;
+  s.fillStyle = color;
+  for (let i = 0; i < MARK.length; i++) {
+    const rct = MARK[i];
+    let sc = 1, dx = 0, dy = 0, a = 1;
+    if (perRect) { const r2 = perRect(i) || {}; sc = r2.sc || 1; dx = r2.dx || 0; dy = r2.dy || 0; a = r2.a === undefined ? 1 : r2.a; if (a <= 0) continue; }
+    const rx = x0 + rct[0] * k + rct[2] * k * (1 - sc) / 2 + dx;
+    const ry = y0 + rct[1] * k + rct[3] * k * (1 - sc) / 2 + dy;
+    s.globalAlpha *= a;
+    s.fillRect(rx, ry, rct[2] * k * sc, rct[3] * k * sc);
+    s.globalAlpha /= a;
+  }
+  s.globalAlpha /= (alpha === undefined ? 1 : alpha);
+}
+
+/* typed strings: `tg` is GLOBAL time (defs carry global t0) */
+function typedLeft(def, tg, x, y, o) {
+  const n = TL.charsAt(def, tg);
+  if (n <= 0) return 0;
+  return txt(def.text.slice(0, n), x, y, o);
+}
+/* bouncy per-letter strike, for the cold open */
+function strikeBounce(def, tg, x, y, o) {
+  o = o || {};
+  const size = o.size || 46;
+  const font = o.font || TYMONO;
+  const ADV = size * 0.6;
+  const fullW = measure(def.text, size, 700, font);
+  const startX = x - fullW / 2;
+  if (o.alpha !== undefined && o.alpha <= 0) return;
+  s.save();
+  s.globalAlpha *= (o.alpha === undefined ? 1 : o.alpha);
+  s.font = "700 " + size + "px " + font;
+  s.textAlign = "left";
+  s.textBaseline = "alphabetic";
+  let cursorX = startX;
+  for (let i = 0; i < def.text.length; i++) {
+    const ti = def.t0 + i / def.cps;
+    if (tg < ti) break;
+    const u = clamp01((tg - ti) / 0.24);
+    const bounce = 1 - eoBack(u);
+    const dy = -9 * bounce, sc = 1 + 0.42 * bounce;
+    if (u < 1) {
+      s.fillStyle = "rgba(242,236,216," + (Math.pow(1 - u, 1.6) * 0.38).toFixed(3) + ")";
+      s.fillRect(startX + i * ADV - 1, y - size * 0.92 + dy * 0.4, ADV + 2, size * 1.14);
+    }
+    s.save();
+    s.translate(startX + i * ADV + ADV / 2, y + dy);
+    s.scale(sc, sc);
+    s.globalAlpha *= clamp01(u * 2.4);
+    s.shadowColor = "rgba(242,236,216,0.6)";
+    s.shadowBlur = 26;
+    s.fillStyle = CREAMC;
+    s.fillText(def.text[i], -ADV / 2, 0);
+    s.shadowBlur = 0;
+    s.fillText(def.text[i], -ADV / 2, 0);
+    s.restore();
+    cursorX = startX + (i + 1) * ADV;
+  }
+  if (blink(tg, 1.7)) {
+    s.fillStyle = CREAMC;
+    s.shadowColor = "rgba(242,236,216,0.5)";
+    s.shadowBlur = 18;
+    s.fillRect(cursorX + 2, y - size * 0.92, ADV * 0.92, size * 1.14);
+    s.shadowBlur = 0;
+  }
+  s.restore();
+}
+
+/* ============================================================== scene 01 */
+function sceneCold(t, tg, a) {
+  fillRR(0, 0, TL.W, TL.H, 0, "#0b0a09");
+  const breathe = 0.85 + 0.15 * Math.sin(t * 1.1);
+  softGlow(s, 960, 520, 640, "rgba(242,236,216," + (0.055 * breathe).toFixed(3) + ")", 1);
+  const zoom = 1 + 0.035 * eioCubic(clamp01(t / 5.4));
+  // the quote rises out of the frame before the paper pushes it out
+  const rise = seg(t, 4.2, 5.4, eioCubic);
+  s.save();
+  s.translate(960, 520); s.scale(zoom, zoom); s.translate(-960, -520);
+  s.translate(0, -460 * rise);
+  strikeBounce(TL.typeById("q"), tg, 960, 548, { size: 46, alpha: 1 - seg(t, 4.7, 5.4) });
+  s.restore();
+  s.drawImage(vignette, 0, 0);
+}
+
+/* ============================================================== scene 02 */
+// the two tables, drawn like the reference diagram: ink on cream paper,
+// navy boxes, hatched bars.
+const BOX = { x: 700, w: 1140, hA: 440, yA: 110, yB: 590 };
+const ROW = { iconX: 790, nameX: 838, barX: 1030, barMax: 610, h: 24, first: 136, step: 50 };
+const BAR_MS = 2920; // the longest bar on either table
+
+function rowY(boxY, i) { return boxY + ROW.first + i * ROW.step; }
+function barW(ms) { return ROW.barMax * Math.sqrt(ms / BAR_MS); }
+
+function drawSpark(x, y, r, color, alpha) {
+  s.save();
+  s.globalAlpha *= alpha;
+  s.fillStyle = color;
+  s.beginPath();
+  s.moveTo(x, y - r);
+  s.quadraticCurveTo(x + r * 0.22, y - r * 0.22, x + r, y);
+  s.quadraticCurveTo(x + r * 0.22, y + r * 0.22, x, y + r);
+  s.quadraticCurveTo(x - r * 0.22, y + r * 0.22, x - r, y);
+  s.quadraticCurveTo(x - r * 0.22, y - r * 0.22, x, y - r);
+  s.fill();
+  s.restore();
+}
+function drawIcon(key, x, y, r, p, alpha) {
+  if (alpha !== undefined && alpha <= 0) return;
+  fillRR(x - r, y - r, r * 2, r * 2, r, PAPER_HI, alpha);
+  strokeRR(x - r, y - r, r * 2, r * 2, r, INK_BLUE, 2.5, alpha);
+  s.save();
+  s.globalAlpha *= alpha;
+  if (key === "theta") {
+    drawMarkRects(x, y, r * 1.15, INK, 1);
+  } else if (key === "pi") {
+    txt("\u03C0", x, y + 9, { size: 26, weight: 700, color: INK, align: "center" });
+  } else if (key === "agy") {
+    drawSpark(x, y, 11, INK, 1);
+  } else {
+    const img = LOGO[key];
+    if (img && img.complete && img.naturalWidth) {
+      const ls = r * 1.15;
+      s.drawImage(img, x - ls / 2, y - ls / 2, ls, ls);
+    }
+  }
+  s.restore();
+}
+function drawBracket(x, y, w, alpha) {
+  s.save();
+  s.globalAlpha *= alpha;
+  s.strokeStyle = hexA(INK, 0.6);
+  s.lineWidth = 1.5;
+  s.beginPath();
+  s.moveTo(x, y + 10); s.lineTo(x, y); s.lineTo(x + w, y); s.lineTo(x + w, y + 10);
+  s.stroke();
+  s.restore();
+}
+function drawScale(x, y, alpha) {
+  // unused since the bars carry their own ms labels
+}
+function drawBar(row, x, y, t, land) {
+  const p = seg(t, land - 0.75, land);
+  if (p <= 0) return;
+  const w = Math.max(2, barW(row.ms) * p);
+  const isTheta = row.key === "theta";
+  s.save();
+  s.fillStyle = isTheta ? hatchRed : hatchNavy;
+  rr(x, y - ROW.h / 2, w, ROW.h, 3);
+  s.fill();
+  s.strokeStyle = isTheta ? hexA(INK_RED, 0.9) : hexA(INK, 0.8);
+  s.lineWidth = 2;
+  rr(x, y - ROW.h / 2, w, ROW.h, 3);
+  s.stroke();
+  s.restore();
+  txt(row.label, x + w + 18, y + 8, {
+    size: 21, weight: isTheta ? 700 : 400,
+    color: isTheta ? INK_RED : INK, alpha: seg(t, land - 0.1, land + 0.25),
+  });
+}
+function drawTable(rows, boxY, t, title, sub) {
+  const p = seg(t, 0.2, 0.7, eoBack);
+  if (p <= 0) return;
+  drawBracket(BOX.x, boxY - 26, BOX.w, 0.6 * p);
+  s.save();
+  s.globalAlpha *= clamp01(p * 1.6);
+  s.fillStyle = PAPER_HI;
+  s.strokeStyle = INK_BLUE; s.lineWidth = 2.5;
+  rr(BOX.x, boxY, BOX.w, 440, 6);
+  s.fill(); s.stroke();
+  s.restore();
+  // the reference's big letter, top-left inside the box
+  txt(title.letter, BOX.x + 38, boxY + 76, { size: 46, weight: 700, color: INK_BLUE, alpha: seg(t, 0.35, 0.8) });
+  txt(title.text, BOX.x + 96, boxY + 56, { size: 25, weight: 700, color: INK, alpha: seg(t, 0.4, 0.9) });
+  txt(sub, BOX.x + 96, boxY + 88, { size: 18, color: INK_DIM, alpha: seg(t, 0.5, 1.0) });
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const y = rowY(boxY, i);
+    const ip = seg(t, 0.5 + i * 0.13, 0.92 + i * 0.13, eoBack);
+    if (ip <= 0) continue;
+    drawIcon(row.key, ROW.iconX, y, 20, ip, clamp01(ip * 1.4));
+    txt(row.name, ROW.nameX, y + 8, { size: 23, weight: 600, color: INK, alpha: seg(t, 0.62 + i * 0.13, 1.0 + i * 0.13) });
+    drawBar(row, ROW.barX, y, t, row.land);
+  }
+}
+function sceneBench(t, tg, a) {
+  fillPaper();
+  const hold = seg(t, 0, 0.8, eioCubic); // settle after the push
+  s.save();
+  s.translate(0, (1 - hold) * 46);
+
+  // left column — title block, the measured claim, the big number
+  typedLeft(TL.typeById("b-head"), tg, 110, 250, { size: 40, color: INK, weight: 700 });
+  txt("one demo chat", 110, 298, { size: 24, color: INK_DIM, alpha: seg(tg, 6.7, 7.1) });
+  typedLeft(TL.typeById("a-head"), tg, 110, 396, { size: 30, color: INK, weight: 700 });
+  txt("first byte → paint → chat on screen", 110, 434, { size: 19, color: INK_DIM, alpha: seg(tg, 7.0, 7.4) });
+  // the big 6 ms stamps in, like the year on the reference card
+  const stamp = seg(t, 3.6, 4.2, eoBack);
+  if (stamp > 0) {
+    s.save();
+    s.translate(110, 610);
+    s.scale(lerp(1.6, 1, stamp), lerp(1.6, 1, stamp));
+    s.globalAlpha *= clamp01(stamp * 1.6);
+    s.font = "800 150px " + MONO;
+    s.fillStyle = INK;
+    s.fillText("6 ms", 0, 0);
+    s.restore();
+    txt("Theta outperformed", 112, 664, {
+      size: 36, weight: 700, font: SERIF, color: INK, alpha: seg(t, 4.1, 4.5),
+    });
+  }
+  typedLeft(TL.typeById("b-cap"), tg, 110, 1006, { size: 22, color: INK_DIM });
+
+  // the two tables
+  drawTable(TL.RESUME, BOX.yA, t, { letter: "A", text: "resuming a chat" }, "chat on screen · median of 3");
+  drawTable(TL.FRESH, BOX.yB, t, { letter: "B", text: "starting fresh, no chat to load" }, "first painted window");
+  s.restore();
+}
+/* ============================================================== scene 03 */
+function sceneFinale(t, tg, a) {
+  fillPaper();
+  // the Th, big — padding cut away, ink on paper like the node
+  const size = 560, mx = 960, my = 340;
+  for (let i = 0; i < MARK.length; i++) {
+    const p = seg(t, 0.4 + i * 0.1, 0.74 + i * 0.1, eoBack);
+    if (p <= 0) continue;
+    const settle = seg(t, 0.8 + i * 0.1, 1.5 + i * 0.1);
+    const sc = lerp(1.7, 1, p);
+    const al = clamp01(p * 1.4);
+    if (settle < 1) {
+      s.save();
+      s.shadowColor = "rgba(111,101,85,0.6)"; s.shadowBlur = lerp(24, 8, settle);
+      drawMarkRects(mx, my, size, INK, al, (j) => (j === i ? { sc: sc, a: 1 } : { sc: 1, a: j < i ? 1 : 0 }));
+      s.restore();
+    } else {
+      drawMarkRects(mx, my, size, INK, al, (j) => ({ sc: 1, a: j <= i ? 1 : 0 }));
+    }
+  }
+  const settled = seg(t, 1.6, 2.2);
+  if (settled > 0) softGlow(s, mx, my, 400 * settled, "rgba(120,105,75,0.16)", 1);
+  // eased-in lines, typewriter cut, sitting close under the mark
+  const t1 = "The harness that lets you work more.";
+  const p1 = seg(t, 2.2, 3.0, eioCubic);
+  if (p1 > 0) {
+    s.save();
+    s.globalAlpha *= p1;
+    s.font = "400 40px " + TYMONO;
+    s.textAlign = "center"; s.textBaseline = "alphabetic";
+    s.fillStyle = INK;
+    s.fillText(t1, 960, 648 + 22 * (1 - p1));
+    s.restore();
+  }
+  const t2 = "Launching soon.";
+  const p2 = seg(t, 2.9, 3.5, eioCubic);
+  if (p2 > 0) {
+    s.save();
+    s.globalAlpha *= p2;
+    s.font = "400 27px " + TYMONO;
+    s.textAlign = "center"; s.textBaseline = "alphabetic";
+    s.fillStyle = INK_DIM;
+    s.fillText(t2, 960, 706 + 18 * (1 - p2));
+    // blinking block cursor — the reference's full stop
+    if (blink(t, 1.4)) {
+      const w2 = measure(t2, 27, 400, TYMONO);
+      fillRR(960 + w2 / 2 + 6, 706 - 25, 15, 30, 2, INK_RED);
+    }
+    s.restore();
+  }
+  const fo = seg(t, 4.9, 5.7, eioCubic);
+  if (fo > 0) {
+    s.save();
+    s.globalAlpha *= fo;
+    s.fillStyle = "#000";
+    s.fillRect(0, 0, TL.W, TL.H);
+    s.restore();
+  }
+}
+
+/* ------------------------------------------------------------- director */
+const S = TL.SCENES;
+let lastT = -1;
+
+function render(t) {
+  if (t === lastT) return;
+  lastT = t;
+  if (t < S.bench[0]) {
+    // the quote rises, the cream bench pushes up under it
+    const p = seg(t, S.bench[0] - TL.PUSH, S.bench[0], eioCubic);
+    s.save();
+    s.translate(0, TL.H * (1 - p));
+    sceneBench(0, t, 1);
+    s.restore();
+    s.save();
+    s.translate(0, -TL.H * p);
+    sceneCold(t, t, 1);
+    s.restore();
+  } else if (t < S.finale[0]) {
+    sceneBench(t - S.bench[0], t, 1);
+  } else {
+    sceneBench(S.bench[1] - S.bench[0], t, 1);
+    const a = seg(t - S.finale[0], 0, TL.FADE, eioCubic);
+    s.save();
+    s.globalAlpha = a;
+    sceneFinale(t - S.finale[0], t, a);
+    s.restore();
+    s.globalAlpha = 1;
+  }
+  const gi = Math.floor(t * TL.FPS) % GRAIN_N;
+  s.globalAlpha = 0.05;
+  s.fillStyle = grainPatterns[gi];
+  s.fillRect(0, 0, TL.W, TL.H);
+  s.globalAlpha = 1;
+  const fi = 1 - seg(t, 0, 0.45, eioCubic);
+  if (fi > 0) { s.globalAlpha = fi; s.fillStyle = "#000"; s.fillRect(0, 0, TL.W, TL.H); s.globalAlpha = 1; }
+}
+window.__render = render;
+
+window.renderAt = (frame) => {
+  render(frame / TL.FPS);
+  return frame;
+};
+
+window.readyPromise = (async () => {
+  await document.fonts.load('700 46px "JetBrains Mono Nerd Font"');
+  await document.fonts.load('400 46px "Nimbus Mono PS"');
+  await document.fonts.ready;
+  if (window.location.search.includes("play")) {
+    const start = performance.now();
+    (function loop() {
+      render(((performance.now() - start) / 1000) % TL.D);
+      requestAnimationFrame(loop);
+    })();
+  } else {
+    const m = window.location.search.match(/t=([0-9.]+)/);
+    render(m ? parseFloat(m[1]) : 0);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+frames/
+frames_test/
+verify/
+ref_overview/
+*.wav

@@ -1,0 +1,171 @@
+import puppeteer from 'puppeteer-core';
+import { resolve } from 'node:path';
+import fs from 'node:fs';
+
+const html = `<!doctype html>
+<html>
+<head>
+<meta charset='utf-8'>
+<style>
+  @font-face {
+    font-family: 'Courier Prime';
+    src: url('fonts/CourierPrime-Regular.ttf') format('truetype');
+  }
+  @font-face {
+    font-family: 'EB Garamond';
+    src: url('fonts/EBGaramond-Italic.ttf') format('truetype');
+    font-style: italic;
+  }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id='c' width='1920' height='1080'></canvas>
+<script>
+const W = 1920, H = 1080;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+window.renderFrame = (typedCount, cursorProgress, line2Progress, dotSwell) => {
+  // Vignette background
+  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 1050);
+  bg.addColorStop(0, '#1c1714');
+  bg.addColorStop(0.55, '#0b0908');
+  bg.addColorStop(1, '#030303');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const TITLE = 'One terminal. Every agent. All at once.';
+  const SUBTITLE = '~ the art of working in parallel';
+
+  const FONT_SIZE = 46;
+  ctx.font = FONT_SIZE + 'px "Courier Prime", monospace';
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+
+  // Measure monospace advance
+  const charWidth = ctx.measureText('M').width;
+  const totalWidth = TITLE.length * charWidth;
+  const startX = Math.round((W - totalWidth) / 2);
+  const baselineY = 530;
+
+  // Draw typed characters
+  const currentStr = TITLE.slice(0, typedCount);
+
+  function drawTextGlow(str, x, y) {
+    ctx.save();
+    // Ambient wide warm bloom
+    ctx.shadowColor = 'rgba(255, 195, 130, 0.25)';
+    ctx.shadowBlur = 32;
+    ctx.fillStyle = '#F5EFE8';
+    ctx.fillText(str, x, y);
+
+    // Tight intense bloom
+    ctx.shadowColor = 'rgba(255, 225, 180, 0.45)';
+    ctx.shadowBlur = 12;
+    ctx.fillText(str, x, y);
+
+    // Core crisp stroke
+    ctx.shadowColor = 'rgba(255, 245, 230, 0.75)';
+    ctx.shadowBlur = 2;
+    ctx.fillText(str, x, y);
+    ctx.restore();
+  }
+
+  if (currentStr.length > 0) {
+    drawTextGlow(currentStr, startX, baselineY);
+  }
+
+  // Cursor handling
+  // cursorProgress: 0.0 = rectangular block cursor, 1.0 = circular glowing dot
+  const curX = startX + currentStr.length * charWidth + 2;
+  const blockW = Math.round(charWidth * 0.96);
+  const blockH = Math.round(FONT_SIZE * 0.94);
+  const blockY = baselineY - blockH + 6;
+
+  if (cursorProgress >= 0) {
+    ctx.save();
+    const p = Math.max(0, Math.min(1, cursorProgress));
+    
+    // Interpolate width, height, radius, y
+    const w = blockW * (1 - p) + 14 * p;
+    const h = blockH * (1 - p) + 14 * p;
+    const r = (p > 0) ? (h / 2 * p) : 0;
+    const cx = curX + blockW / 2;
+    const cy = blockY + blockH / 2;
+    const x = cx - w / 2;
+    const y = cy - h / 2;
+
+    ctx.fillStyle = '#F5EFE8';
+    ctx.shadowColor = 'rgba(255, 220, 160, 0.85)';
+    ctx.shadowBlur = 14 + p * 6;
+
+    if (dotSwell > 0) {
+      // Swelling transition circle
+      const swellR = 7 + dotSwell * 1200;
+      ctx.beginPath();
+      ctx.arc(cx, cy, swellR, 0, Math.PI * 2);
+      ctx.fillStyle = '#FAF6F0';
+      ctx.shadowColor = 'rgba(255, 235, 200, 0.9)';
+      ctx.shadowBlur = 40;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      if (r > 0) {
+        ctx.roundRect(x, y, w, h, r);
+      } else {
+        ctx.rect(x, y, w, h);
+      }
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Line 2: EB Garamond Italic with horizontal reveal mask
+  if (line2Progress > 0) {
+    ctx.save();
+    ctx.font = 'italic 38px "EB Garamond", serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+
+    const subWidth = ctx.measureText(SUBTITLE).width;
+    const subX = Math.round((W - subWidth) / 2);
+    const subY = 625;
+
+    // Clipping reveal from left to right with soft edge
+    const revealW = subWidth * Math.min(1, line2Progress * 1.05);
+    ctx.beginPath();
+    ctx.rect(subX - 10, subY - 60, revealW + 10, 80);
+    ctx.clip();
+
+    ctx.shadowColor = 'rgba(255, 220, 180, 0.15)';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = 'rgba(179, 173, 166, ' + Math.min(0.9, line2Progress * 1.2) + ')';
+    ctx.fillText(SUBTITLE, subX, subY);
+    ctx.restore();
+  }
+};
+</script>
+</body>
+</html>`;
+
+fs.writeFileSync('preview.html', html);
+
+const browser = await puppeteer.launch({
+  executablePath: '/usr/bin/chromium',
+  headless: 'new',
+  args: ['--no-sandbox', '--force-device-scale-factor=1', '--hide-scrollbars'],
+  defaultViewport: { width: 1920, height: 1080 },
+});
+const page = await browser.newPage();
+await page.goto('file://' + resolve('preview.html'), { waitUntil: 'networkidle0' });
+await page.evaluate(async () => {
+  await document.fonts.load('46px "Courier Prime"');
+  await document.fonts.load('italic 38px "EB Garamond"');
+  await document.fonts.ready;
+  window.renderFrame(39, 1.0, 1.0, 0.0);
+});
+await page.screenshot({ path: '/tmp/preview_full.png' });
+await browser.close();
+console.log('Preview full frame written to /tmp/preview_full.png');
