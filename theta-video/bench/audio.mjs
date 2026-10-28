@@ -187,6 +187,18 @@ for (const r of RATCHET) {
 }
 
 let PIX_I = 0;
+// The Th forming out of pixels gets its own voice: one breathy swell rising
+// under the whole assembly, and a tick per pixel that climbs in pitch as the
+// mark fills in — the sound of a picture being pushed onto paper.
+const PIXES = TL.HITS.filter((h) => h.kind === "pixel");
+const PIX_N = Math.max(1, PIXES.length);
+if (PIXES.length) {
+  noise({
+    t0: PIXES[0].t - 0.35,
+    dur: PIXES[PIXES.length - 1].t - PIXES[0].t + 0.8,
+    gain: 0.03, cutoff: 480, sweepTo: 3600, seed: 57,
+  });
+}
 for (const h of TL.HITS) {
   switch (h.kind) {
     case "whoosh":
@@ -197,6 +209,16 @@ for (const h of TL.HITS) {
       voice({ t0: h.t, dur: 1.1, freq: NOTE("D4"), type: "tri", gain: 0.06, attack: 0.5, release: 0.6, cutoff: 500 });
       voice({ t0: h.t + 0.35, dur: 0.8, freq: NOTE("A3"), type: "tri", gain: 0.05, attack: 0.3, release: 0.5, cutoff: 700 });
       break;
+    case "pixel": {
+      // one tick per rect of the mark, rising through the formation, gently
+      // ping-ponging in stereo, with a soft bell every fourth pixel
+      const i = PIX_I++, u = i / Math.max(1, PIX_N - 1);
+      const pan = (i % 2 ? 0.28 : -0.28);
+      noise({ t0: h.t, dur: 0.02, gain: 0.042, cutoff: 2400 + 2200 * u, seed: (i * 7823 + 11) | 0, pan });
+      voice({ t0: h.t, dur: 0.05, freq: 330 * Math.pow(2, u * 0.85), type: "sine", gain: 0.05, attack: 0.002, release: 0.09, cutoff: 5200, pan });
+      if (i % 4 === 3) pluck(h.t + 0.02, ["D5", "F5", "A5", "D6"][(i / 4) | 0] || "D6", 0.05, pan * 0.6);
+      break;
+    }
     case "ring":
       voice({ t0: h.t, dur: 1.6, freq: NOTE("D2"), type: "sine", gain: 0.13, attack: 0.01, release: 1.2, cutoff: 400 });
       noise({ t0: h.t, dur: 1.3, gain: 0.045, cutoff: 900, sweepTo: 5200, seed: 91 });

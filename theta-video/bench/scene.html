@@ -441,9 +441,34 @@ function sceneBench(t, tg, a) {
     s.fillStyle = INK;
     s.fillText("6 ms", 0, 0);
     s.restore();
-    txt("was the slowest!", 114, 664, {
+    txt("was the fastest among", 114, 664, {
       size: 27, weight: 700, color: INK, alpha: seg(t, 4.1, 4.5),
     });
+  }
+  // a waving underline, drawn smoothly under the claim once it is up:
+  // a red ink stroke that grows left to right, then keeps a lazy sine wave
+  // rolling through it for the rest of the scene.
+  {
+    const cap = "was the fastest among";
+    const proc = seg(t, 4.45, 5.15, eioCubic);
+    if (proc > 0) {
+      const w0 = measure(cap, 27, 700, MONO);
+      const x0 = 114, y0 = 679;
+      s.save();
+      s.strokeStyle = INK_RED;
+      s.lineWidth = 3;
+      s.lineCap = "round";
+      s.beginPath();
+      const xEnd = x0 + w0 * proc;
+      for (let x = x0; x <= xEnd; x += 5) {
+        const u = (x - x0) / w0;
+        const swell = seg(t, 4.45, 6.2);            // amplitude eases in with the stroke
+        const y = y0 + Math.sin(u * Math.PI * 2.4 - t * 1.9) * 3.6 * swell;
+        x === x0 ? s.moveTo(x, y) : s.lineTo(x, y);
+      }
+      s.stroke();
+      s.restore();
+    }
   }
   typedLeft(TL.typeById("b-cap"), tg, 110, 1006, { size: 22, color: INK_DIM });
 

@@ -94,6 +94,12 @@ for (const t of TIMES) {
           if (p[0] < 90 && p[1] < 90) cap++;
         }
         out.checks.push(["theta outperformed caption", cap > 20]);
+        let wave = 0;
+        for (let x = 116; x < 420; x += 5) for (let y = 670; y < 688; y += 2) {
+          const p = px(x, y);
+          if (p[0] > 110 && p[1] < 80) wave++;
+        }
+        out.checks.push(["waving red underline", wave > 10]);
       }
       if (tt >= 17.8 && tt <= 18.8) {
         let th = 0, soon = 0;
